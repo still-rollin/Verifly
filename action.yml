@@ -1,37 +1,79 @@
 name: "Verifly"
-description: "Fast CI for Lean proof verification with mathlib caching"
+description: "Fast CI for Lean proof verification with caching + mathlib oleans"
 
 runs:
   using: "composite"
   steps:
+    # ------------------------------------------------------------
+    # 1. Cache Lean toolchain (elan)
+    # ------------------------------------------------------------
+    - name: Cache elan toolchain
+      uses: actions/cache@v3
+      with:
+        path: ~/.elan
+        key: ${{ runner.os }}-elan-${{ hashFiles('lean-toolchain') }}
+
+    # ------------------------------------------------------------
+    # 2. Install Lean toolchain (if not already cached)
+    # ------------------------------------------------------------
     - name: Install Lean toolchain (elan)
       run: |
-        curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf \
-          | sh -s -- -y
+        if [ ! -d "$HOME/.elan" ]; then
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf \
+            | sh -s -- -y
+        fi
         echo "$HOME/.elan/bin" >> $GITHUB_PATH
       shell: bash
 
+    # ------------------------------------------------------------
+    # 3. Cache Lake dependencies + build artifacts
+    # ------------------------------------------------------------
+    - name: Cache Lake build (packages + oleans)
+      uses: actions/cache@v3
+      with:
+        path: |
+          .lake/packages
+          .lake/build
+        key: ${{ runner.os }}-lake-${{ hashFiles('lake-manifest.json') }}
+        restore-keys: |
+          ${{ runner.os }}-lake-
+
+    # ------------------------------------------------------------
+    # 4. Ensure dependencies are up to date
+    # ------------------------------------------------------------
     - name: Lake update
       run: lake update
       shell: bash
 
+    # ------------------------------------------------------------
+    # 5. Fetch mathlib precompiled cache (oleans)
+    # ------------------------------------------------------------
     - name: Fetch mathlib precompiled cache
       run: |
-        lake exe cache get || echo "⚠️ No mathlib cache available"
+        echo "⚡ Fetching mathlib oleans cache..."
+        lake exe cache get || echo "⚠️ No remote mathlib cache available"
       shell: bash
 
+    # ------------------------------------------------------------
+    # 6. Verify proofs (main Lean build)
+    # ------------------------------------------------------------
     - name: Verify proofs (lake build)
       run: |
+        echo "✅ Running Lean proof verification..."
         set -o pipefail
         lake build 2>&1 | tee verifly.log
       shell: bash
 
+    # ------------------------------------------------------------
+    # 7. Failure summary (last lines)
+    # ------------------------------------------------------------
     - name: Failure summary
       if: failure()
       run: |
+        echo ""
         echo "❌ Verifly: Lean verification failed"
-        echo "------ Last 40 lines ------"
-        tail -n 40 verifly.log
-        echo "---------------------------"
+        echo "--------------------------------------"
+        echo "Last 50 lines of build log:"
+        tail -n 50 verifly.log
+        echo "--------------------------------------"
       shell: bash
-
